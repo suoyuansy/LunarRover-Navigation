@@ -1,0 +1,73 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+ENV/
+env/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 数据文件（太大，不上传）
+start_file/
+*.txt
+!requirements.txt  # 如果有依赖文件，保留
+
+# 遥感影像数据（文件太大，不上传）
+*.tif
+*.tiff
+*.geotiff
+*.img
+*.hdr
+*.sdat
+*.png
+!docs/images/*.png  # 如果文档图片需要保留，取消这行注释
+
+# 测试数据目录
+code_test/data/
+data/
+
+# 输出目录
+local_planningpath/
+output/
+results/
+
+# 模型/可执行文件
+*.exe
+*.dll
+*.pyd
+*.onnx
+*.pt
+*.pth
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+Thumbs.db
