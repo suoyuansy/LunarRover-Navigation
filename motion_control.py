@@ -85,7 +85,7 @@ def move_to_target_constant_yaw(client, accumulator,
             (prev_x, prev_y, prev_z),
             (x, y, z),
             color=(1, 0, 0),
-            thickness=2.0,
+            thickness=4.0,
             persistent=True
         )
         prev_x, prev_y, prev_z = x, y, z

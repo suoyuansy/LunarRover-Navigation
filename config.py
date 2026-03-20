@@ -11,7 +11,7 @@ VEHICLE_NAME = "Car1"
 # 路径跟踪相关
 STEP_DISTANCE = 0.25
 STEP_DISTANCE_DELAY = 0.1
-STEP_ANGLE = 20
+STEP_ANGLE = 30
 STEP_ANGLE_DELAY = 0.1
 DRAW_DEBUG = True
 PLANNED_PATH_Z_OFFSET = 0.5
@@ -31,14 +31,10 @@ LIDAR_SCAN_RANGE = 30.0
 LIDAR_FRAMES_PER_SAMPLE = 1
 LIDAR_SAMPLE_INTERVAL = 0.1
 
-# 新增：每次设定完位姿后，等待多少帧"新的雷达点云"
 LIDAR_WAIT_NEW_FRAMES_AFTER_POSE_SET = 3
-
-# 新增：等待新帧时的轮询间隔和超时
 LIDAR_POLL_INTERVAL = 0.005
 LIDAR_WAIT_TIMEOUT_PER_FRAME = 10
 
-# 点云预处理
 LIDAR_MIN_VALID_DISTANCE = 1.0
 LIDAR_MAX_VALID_DISTANCE = 50.0
 LIDAR_MIN_Z = -100.0
@@ -51,20 +47,16 @@ LOCAL_DEM_RANGE = 10.0
 LOCAL_DEM_RESOLUTION = 0.1
 LOCAL_DEM_GRID_SIZE = int((LOCAL_DEM_RANGE * 2) / LOCAL_DEM_RESOLUTION)
 
-# DEM 插值参数
+LOCAL_GOAL_LOOKAHEAD_POINTS = 20
+
 DEM_GAUSSIAN_SIGMA = 1.0
 DEM_USE_GDAL_FILL = True
-
-# 每栅格融合方式
 GRID_FUSION_METHOD = "median"
 
-# 构建 DEM 的策略
 INITIAL_BUILD_AFTER_SEGMENT_INDEX = 0
-BUILD_EVERY_N_SEGMENTS = 4
 
-# 输出目录
+
 OUTPUT_ROOT_DIR = "local_planningpath"
-# 数据文件夹路径（相对于当前工作目录）
 DATA_DIR = "global_path_file"
 
 # ========================================
@@ -73,5 +65,38 @@ DATA_DIR = "global_path_file"
 PATH_PLANNING_EXE = r"D:\Graduation_design\code\path_planning_based_on_lunar_DEM\out\build\x64-Debug\path_planning_based_on_lunar_DEM.exe"
 PATH_PLANNING_TIMEOUT = 15.0
 
-# 雷达传感器离地面的高度（Z轴向下为正，所以实际地面比传感器低 LIDAR_HEIGHT_OFFSET）
-LIDAR_HEIGHT_OFFSET = 0.5  # 50cm = 0.5m
+# 雷达传感器离地面的高度（Z轴向下为正）
+LIDAR_HEIGHT_OFFSET = 1.5
+
+# ========================================
+# 终点挪动与评分参数
+# ========================================
+PATH_REPLAN_ROOT_DIRNAME = "path_replan"
+LOCAL_MOVE_ENDPOINT_DIRNAME = "local_replan(move_the_endpoint)"
+LOCAL_SOFTEN_DIRNAME = "local_replan(soften_obstacles)"
+GLOBAL_REPLAN_DIRNAME = "global_path_replan"
+
+# 候选终点搜索最大半径（栅格）
+CANDIDATE_SEARCH_MAX_RADIUS_CELLS = 8
+
+# 终点评分时的邻域统计半径（栅格）
+CLEARANCE_NEIGHBORHOOD_RADIUS_CELLS = 10
+
+# ========================================
+# 全局 costmap / 修正参数
+# ========================================
+GLOBAL_COSTMAP_FILENAME = "global_costmap.txt"
+GLOBAL_COSTMAP_RESOLUTION = 1.0
+GLOBAL_OBSTACLE_INFLATION_RADIUS = 1
+
+# 全局重规划时：以“原局部终点之后 3 个全局路径点”作为连接点
+GLOBAL_REPLAN_SKIP_POINTS = 3
+
+# 软化障碍时把 1 改成 0.99
+REVISION_SOFT_COST = 0.99
+
+# 局部 / 全局起点软化的最大尝试半径
+START_RELAX_MAX_RADIUS_CELLS = 20
+
+# 读取大 DEM 时生成缓存
+ENABLE_DEM_NPY_CACHE = True
