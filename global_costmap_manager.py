@@ -18,8 +18,6 @@ from visualization import (
     load_costmap_txt,
     save_costmap_txt,
     make_costmap_gray_image,
-    draw_start_goal_on_gray,
-    draw_path_on_image,
 )
 
 
@@ -252,13 +250,15 @@ def run_global_replan(
     """
     from pathlib import Path
     from visualization import save_costmap_txt
-    
+
     output_dir = Path(output_dir)
     ensure_dir(output_dir)
 
     fused_global_costmap, _ = build_fused_global_costmap(base_global_costmap, local_obstacle_observations)
-    fused_costmap_path = output_dir / "global_costmap.txt"
-    save_costmap_txt(fused_global_costmap, fused_costmap_path)
+
+    # 不再正式保存 global_costmap.txt，只生成一个临时文件供 C++ 重规划使用
+    temp_fused_costmap_path = output_dir / "_temp_global_costmap_for_replan.txt"
+    save_costmap_txt(fused_global_costmap, temp_fused_costmap_path)
 
     total_segments = len(waypoints_with_yaw) - 1
     reconnect_idx = min(original_local_goal_idx + GLOBAL_REPLAN_SKIP_POINTS, total_segments)
@@ -268,7 +268,7 @@ def run_global_replan(
     goal_col, goal_row = world_to_global_costmap_cell(reconnect_world[0], reconnect_world[1])
 
     status, path_points = local_path_planner.plan_path_from_costmap(
-        costmap_path=fused_costmap_path,
+        costmap_path=temp_fused_costmap_path,
         start_col=start_col,
         start_row=start_row,
         goal_col=goal_col,
@@ -276,12 +276,11 @@ def run_global_replan(
         output_dir=output_dir,
     )
 
-    used_costmap_path = fused_costmap_path
+    used_costmap_path = temp_fused_costmap_path
 
-    # 如果失败，尝试软化起点
     if status in ("START_IS_OBSTACLE", "START_AND_GOAL_ARE_OBSTACLES", "NO_PATH_FOUND"):
         status, path_points, soften_costmap_path, used_radius = local_path_planner.plan_path_from_costmap_with_start_relaxation(
-            costmap_path=fused_costmap_path,
+            costmap_path=temp_fused_costmap_path,
             start_col=start_col,
             start_row=start_row,
             goal_col=goal_col,
@@ -293,7 +292,6 @@ def run_global_replan(
         used_costmap_path = soften_costmap_path
         print(f"全局重规划起点软化结束，状态: {status}，半径: {used_radius}")
 
-    # 保存可视化
     path_vis_path = output_dir / "path.jpg"
     save_global_replan_path_visualization(
         costmap_path=used_costmap_path,
@@ -305,14 +303,25 @@ def run_global_replan(
     )
 
     if status != "OK" or not path_points:
+        if temp_fused_costmap_path.exists():
+            try:
+                temp_fused_costmap_path.unlink()
+            except Exception:
+                pass
         return status, None, reconnect_idx
 
     new_segment_waypoints = build_waypoints_with_yaw_from_global_path_cells(path_points)
     merged_waypoints = merge_replanned_global_path(new_segment_waypoints, waypoints_with_yaw, reconnect_idx)
 
-    # 保存最终路径文本
     final_path_txt = output_dir / "path.txt"
     text = "->".join(f"({c},{r})" for c, r in path_points)
     final_path_txt.write_text(text, encoding="utf-8")
+
+    # 删除临时全局融合 costmap，不再保留
+    if temp_fused_costmap_path.exists():
+        try:
+            temp_fused_costmap_path.unlink()
+        except Exception:
+            pass
 
     return "OK", merged_waypoints, reconnect_idx

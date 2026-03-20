@@ -3,6 +3,33 @@
 包含所有可调参数和常量配置
 """
 
+from pathlib import Path
+
+# ========================================
+# 路径基础配置
+# ========================================
+PROJECT_ROOT = Path(__file__).resolve().parent
+
+# 全局路径文件目录（兼容原逻辑）
+DATA_DIR = str(PROJECT_ROOT / "global_path_file")
+OUTPUT_ROOT_DIR = "local_planningpath"
+
+# 全局原始输入数据目录（用于调用 C++ 全局交互规划）
+GLOBAL_SOURCE_DATA_DIR = PROJECT_ROOT / "data"
+GLOBAL_DEM_TIF_PATH = GLOBAL_SOURCE_DATA_DIR / "CE7DEM_1km.tif"
+GLOBAL_COLOR_PNG_PATH = GLOBAL_SOURCE_DATA_DIR / "CE7DEM_1km_color.png"
+
+# 全局交互规划输出目录
+GLOBAL_OUTPUT_DIR = PROJECT_ROOT / "global_path_file"
+
+# 是否启用 C++ 全局交互路径规划
+# False: 不调用 C++，直接读取 global_path_file 下已有的 dem/path/costmap
+# True : 先调用 C++ 全局交互规划器，再读取 global_path_file 下结果
+ENABLE_CPP_GLOBAL_PATH_PLANNING = True
+
+# 全局 DEM 分辨率（米）
+GLOBAL_DEM_RESOLUTION = 1.0
+
 # ========================================
 # 车辆与仿真配置
 # ========================================
@@ -55,15 +82,11 @@ GRID_FUSION_METHOD = "median"
 
 INITIAL_BUILD_AFTER_SEGMENT_INDEX = 0
 
-
-OUTPUT_ROOT_DIR = "local_planningpath"
-DATA_DIR = "global_path_file"
-
 # ========================================
 # C++ 路径规划器配置
 # ========================================
 PATH_PLANNING_EXE = r"D:\Graduation_design\code\path_planning_based_on_lunar_DEM\out\build\x64-Debug\path_planning_based_on_lunar_DEM.exe"
-PATH_PLANNING_TIMEOUT = 15.0
+PATH_PLANNING_TIMEOUT = 300.0
 
 # 雷达传感器离地面的高度（Z轴向下为正）
 LIDAR_HEIGHT_OFFSET = 1.5
@@ -85,7 +108,8 @@ CLEARANCE_NEIGHBORHOOD_RADIUS_CELLS = 10
 # ========================================
 # 全局 costmap / 修正参数
 # ========================================
-GLOBAL_COSTMAP_FILENAME = "global_costmap.txt"
+# 注意：启用 C++ 全局交互规划后，最终仍然会从 global_path_file/costmap.txt 读取
+GLOBAL_COSTMAP_FILENAME = "costmap.txt"
 GLOBAL_COSTMAP_RESOLUTION = 1.0
 GLOBAL_OBSTACLE_INFLATION_RADIUS = 1
 
@@ -97,6 +121,3 @@ REVISION_SOFT_COST = 0.99
 
 # 局部 / 全局起点软化的最大尝试半径
 START_RELAX_MAX_RADIUS_CELLS = 20
-
-# 读取大 DEM 时生成缓存
-ENABLE_DEM_NPY_CACHE = True

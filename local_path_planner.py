@@ -21,6 +21,144 @@ class LocalPathPlanner:
         self.exe_path = Path(exe_path)
         self.timeout = PATH_PLANNING_TIMEOUT
 
+    # ============================================================
+    # 新增：全局交互路径规划
+    # ============================================================
+    def plan_global_path_interactive(self, dem_tif_path, color_png_path, resolution, output_dir):
+        """
+        调用 C++ 全局交互路径规划器。
+
+        这里的正确逻辑是：
+        - 实时打印 C++ stdout，让 Python 终端能看到交互说明
+        - 必须等待 C++ 进程真正退出（例如用户按 ESC 关闭窗口）后，才继续后续 Python 流程
+        - 退出后再检查 dem.txt / costmap.txt / path.txt 是否生成
+        """
+        import threading
+        import queue
+
+        dem_tif_path = Path(dem_tif_path)
+        color_png_path = Path(color_png_path)
+        output_dir = Path(output_dir)
+
+        if not self.exe_path.exists():
+            return "EXE_NOT_FOUND"
+        if not dem_tif_path.exists():
+            return "DEM_TIF_NOT_FOUND"
+        if not color_png_path.exists():
+            return "COLOR_PNG_NOT_FOUND"
+
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        # 删除旧结果，避免误判
+        for name in ("dem.txt", "costmap.txt", "path.txt"):
+            f = output_dir / name
+            if f.exists():
+                f.unlink()
+
+        cmd = self._build_global_interactive_cmd(
+            dem_tif_path=dem_tif_path,
+            color_png_path=color_png_path,
+            resolution=resolution,
+            output_dir=output_dir,
+        )
+
+        print("\n" + "=" * 70)
+        print("调用 C++ 全局交互路径规划器")
+        print("=" * 70)
+        print(f"EXE: {self.exe_path}")
+        print(f"DEM tif: {dem_tif_path}")
+        print(f"Color png: {color_png_path}")
+        print(f"Resolution: {resolution}m")
+        print(f"Output dir: {output_dir}")
+        print("请在 C++ 弹出的底图窗口中完成全局路径交互规划。")
+        print("=" * 70)
+
+        try:
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+            )
+        except Exception as e:
+            print(f"启动全局交互路径规划器失败: {e}")
+            return "PROCESS_ERROR"
+
+        # 用后台线程持续读取 stdout，避免主线程阻塞
+        q = queue.Queue()
+        def _reader_thread(pipe, q_):
+            try:
+                for line in iter(pipe.readline, ''):
+                    q_.put(line)
+            except Exception:
+                pass
+            finally:
+                try:
+                    pipe.close()
+                except Exception:
+                    pass
+
+        t = threading.Thread(target=_reader_thread, args=(process.stdout, q), daemon=True)
+        t.start()
+
+        start_time = time.time()
+
+        # 关键：这里必须等进程退出，而不是文件一生成就返回
+        while True:
+            # 实时打印 C++ 输出，让交互说明能看到
+            while not q.empty():
+                line = q.get_nowait()
+                print(line, end="")
+
+            return_code = process.poll()
+            if return_code is not None:
+                break
+
+            if self.timeout is not None and self.timeout > 0:
+                if time.time() - start_time > self.timeout:
+                    process.kill()
+                    print("\n全局交互路径规划器运行超时，已终止。")
+                    return "TIMEOUT"
+
+            time.sleep(0.05)
+
+        # 把退出前残留的输出再打印完
+        time.sleep(0.1)
+        while not q.empty():
+            line = q.get_nowait()
+            print(line, end="")
+
+        dem_file = output_dir / "dem.txt"
+        costmap_file = output_dir / "costmap.txt"
+        path_file = output_dir / "path.txt"
+
+        if not dem_file.exists():
+            return "DEM_NOT_FOUND"
+        if not costmap_file.exists():
+            return "COSTMAP_NOT_FOUND"
+        if not path_file.exists():
+            return "PATH_NOT_FOUND"
+
+        path_status, _ = self._parse_path_txt(path_file)
+        return path_status
+
+    def _build_global_interactive_cmd(self, dem_tif_path, color_png_path, resolution, output_dir):
+        """
+        与 C++ main.cpp 的 Mode 3 保持一致：
+            exe <tiff_path> <tiff_color_path> <result_dir> <grid_size>
+        """
+        return [
+            str(self.exe_path),
+            str(dem_tif_path),
+            str(color_png_path),
+            str(output_dir),
+            str(resolution),
+        ]
+
+    # ============================================================
+    # 原有：局部 DEM 路径规划
+    # ============================================================
     def plan_path(self, dem_path, start_col, start_row, goal_col, goal_row, resolution, output_dir):
         """基于 DEM 进行路径规划"""
         dem_path = Path(dem_path)
@@ -94,7 +232,7 @@ class LocalPathPlanner:
         revision_filename,
         max_radius=START_RELAX_MAX_RADIUS_CELLS,
         stop_when_start_cleared_only=False,
-        gradual=False,  # 新增参数：True=逐渐软化（全局），False=一次性软化（局部）
+        gradual=False,
     ):
         """
         软化起点附近障碍
@@ -110,17 +248,15 @@ class LocalPathPlanner:
         revision_costmap_path = output_dir / revision_filename
 
         if not gradual:
-            # 局部DEM：一次性软化到最大半径
             revised = raw_costmap.copy()
             self._soften_obstacles_in_radius(
                 costmap=revised,
                 center=(start_col, start_row),
-                radius=max_radius,  # 直接使用最大半径
+                radius=max_radius,
                 soft_cost=REVISION_SOFT_COST,
             )
             save_costmap_txt(revised, revision_costmap_path)
-            
-            # 只调用一次规划器
+
             status, path_points = self.plan_path_from_costmap(
                 costmap_path=revision_costmap_path,
                 start_col=start_col,
@@ -129,10 +265,9 @@ class LocalPathPlanner:
                 goal_row=goal_row,
                 output_dir=output_dir,
             )
-            
+
             return status, path_points, revision_costmap_path, max_radius
         else:
-            # 全局DEM：逐渐扩大半径
             last_status = "NO_PATH_FOUND"
             last_path = None
             last_radius = 0
@@ -167,7 +302,7 @@ class LocalPathPlanner:
                     return status, path_points, revision_costmap_path, radius
 
             return last_status, last_path, revision_costmap_path, last_radius
-        
+
     @staticmethod
     def _soften_obstacles_in_radius(costmap, center, radius, soft_cost=0.99):
         """软化指定半径内的障碍"""
@@ -249,6 +384,8 @@ class LocalPathPlanner:
     def _parse_path_txt(self, path_file):
         """解析路径文件"""
         import re
+
+        path_file = Path(path_file)
 
         if not path_file.exists():
             return "NO_PATH_FOUND", None

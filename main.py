@@ -18,8 +18,12 @@ from config import (
     LOCAL_DEM_RESOLUTION,
     INITIAL_BUILD_AFTER_SEGMENT_INDEX,
     LIDAR_HEIGHT_OFFSET,
-    DATA_DIR,
     GLOBAL_COSTMAP_FILENAME,
+    ENABLE_CPP_GLOBAL_PATH_PLANNING,
+    GLOBAL_DEM_TIF_PATH,
+    GLOBAL_COLOR_PNG_PATH,
+    GLOBAL_OUTPUT_DIR,
+    GLOBAL_DEM_RESOLUTION,
 )
 from utils import (
     read_dem_file,
@@ -92,33 +96,65 @@ def build_waypoints_with_yaw(waypoints):
     return waypoints_with_yaw
 
 
-def load_global_data():
-    """加载全局数据"""
-    if not os.path.exists(DATA_DIR):
-        raise FileNotFoundError(f"数据目录不存在: {os.path.abspath(DATA_DIR)}")
+def load_global_data(use_cpp_global_planner=False, planner=None):
+    """
+    加载全局数据。
 
-    dem_file_path = os.path.join(DATA_DIR, "dem.txt")
-    if not os.path.exists(dem_file_path):
+    两种模式：
+    1) use_cpp_global_planner = False
+       直接从 global_path_file 读取 dem.txt / costmap.txt / path.txt
+    2) use_cpp_global_planner = True
+       先调用 C++ 全局交互规划器生成文件，再读取
+    """
+    data_dir = Path(GLOBAL_OUTPUT_DIR)
+    data_dir.mkdir(parents=True, exist_ok=True)
+
+    if use_cpp_global_planner:
+        if planner is None:
+            planner = LocalPathPlanner()
+
+        status = planner.plan_global_path_interactive(
+            dem_tif_path=GLOBAL_DEM_TIF_PATH,
+            color_png_path=GLOBAL_COLOR_PNG_PATH,
+            resolution=GLOBAL_DEM_RESOLUTION,
+            output_dir=data_dir,
+        )
+
+        if status != "OK":
+            raise RuntimeError(f"C++ 全局交互路径规划失败，状态: {status}")
+
+    if not data_dir.exists():
+        raise FileNotFoundError(f"全局数据目录不存在: {data_dir}")
+
+    dem_file_path = data_dir / "dem.txt"
+    if not dem_file_path.exists():
         raise FileNotFoundError(f"DEM 文件不存在: {dem_file_path}")
 
-    global_costmap_file = os.path.join(DATA_DIR, GLOBAL_COSTMAP_FILENAME)
-    if not os.path.exists(global_costmap_file):
+    global_costmap_file = data_dir / GLOBAL_COSTMAP_FILENAME
+    if not global_costmap_file.exists():
         raise FileNotFoundError(f"全局 costmap 文件不存在: {global_costmap_file}")
 
-    read_dem_file(dem_file_path)
+    path_file = data_dir / "path.txt"
+    if not path_file.exists():
+        candidates = sorted(data_dir.glob("path*.txt"))
+        if not candidates:
+            raise FileNotFoundError(f"未在 {data_dir} 下找到 path.txt 或 path*.txt 文件")
+        path_file = candidates[0]
+
+    print("\n" + "=" * 70)
+    print("加载全局数据")
+    print("=" * 70)
+    print(f"DEM: {dem_file_path}")
+    print(f"Costmap: {global_costmap_file}")
+    print(f"Path: {path_file}")
+    print("=" * 70)
+
+    read_dem_file(str(dem_file_path))
     calculate_airsim_elevation()
 
-    base_global_costmap = load_costmap_txt(global_costmap_file)
+    base_global_costmap = load_costmap_txt(str(global_costmap_file))
 
-    path_file = None
-    for file in os.listdir(DATA_DIR):
-        if file.startswith("path") and file.endswith(".txt"):
-            path_file = os.path.join(DATA_DIR, file)
-            break
-    if path_file is None:
-        raise FileNotFoundError(f"未在 {DATA_DIR} 下找到 path*.txt 文件")
-
-    path_points = read_path_file(path_file)
+    path_points = read_path_file(str(path_file))
     waypoints = generate_waypoints_with_elevation(path_points)
     if len(waypoints) < 2:
         raise ValueError("路径点数量不足，至少需要 2 个点")
@@ -135,17 +171,14 @@ def reorganize_planning_output(planning_output_dir, dem_build_dir, has_path):
     """
     planning_output_dir = Path(planning_output_dir)
     dem_build_dir = Path(dem_build_dir)
-    
-    # 移动 costmap.txt 到 dem_build_dir 作为 dem_costmap.txt
+
     costmap_src = planning_output_dir / "costmap.txt"
     if costmap_src.exists():
         costmap_dst = dem_build_dir / "dem_costmap.txt"
         shutil.move(str(costmap_src), str(costmap_dst))
         print(f"已移动 costmap 到: {costmap_dst}")
-    
-    # 如果没有路径，删除不必要的可视化文件
+
     if not has_path:
-        # 删除路径相关的可视化文件（如果存在）
         for file in ["costmap_with_start_goal_and_path.jpg", "dem_3d_with_start_goal_and_path.jpg"]:
             f = planning_output_dir / file
             if f.exists():
@@ -159,7 +192,13 @@ def main():
     print("AirSim CV模式 + LiDAR 局部路径规划与 DEM 构建")
     print("=" * 70)
 
-    base_global_costmap, waypoints_with_yaw = load_global_data()
+    # 先创建规划器，这样一开始就能决定是否调用 C++ 全局交互规划
+    local_path_planner = LocalPathPlanner()
+
+    base_global_costmap, waypoints_with_yaw = load_global_data(
+        use_cpp_global_planner=ENABLE_CPP_GLOBAL_PATH_PLANNING,
+        planner=local_path_planner,
+    )
 
     output_root_dir, run_dir, _ = create_run_output_folder()
     print(f"总输出目录: {output_root_dir}")
@@ -173,7 +212,6 @@ def main():
 
     pointcloud_accumulator = PointCloudAccumulator(VEHICLE_NAME, LIDAR_SENSOR_NAME)
     local_dem_builder = LocalDEMBuilder(LOCAL_DEM_RANGE, LOCAL_DEM_RESOLUTION)
-    local_path_planner = LocalPathPlanner()
     pointcloud_accumulator.initialize(client)
 
     draw_planned_path(client, waypoints_with_yaw, color=(0, 0, 1))
@@ -202,7 +240,6 @@ def main():
             print(f"{'=' * 70}")
 
             while current_global_idx < target_initial_idx:
-                wp_start = waypoints_with_yaw[current_global_idx]
                 wp_target = waypoints_with_yaw[current_global_idx + 1]
 
                 current_x, current_y, current_z, current_yaw = move_to_target_constant_yaw(
@@ -293,7 +330,6 @@ def main():
             planning_output_dir = dem_build_dir / "local_path_planning_result"
             ensure_dir(planning_output_dir)
 
-            # 第一次调用 C++ 规划器
             status, path_points_dem = local_path_planner.plan_path(
                 dem_path=dem_txt_path,
                 start_col=start_col,
@@ -305,14 +341,11 @@ def main():
             )
 
             has_path = (status == "OK" and path_points_dem is not None)
-            
-            # 重新组织输出文件
+
             reorganize_planning_output(planning_output_dir, dem_build_dir, has_path)
-            
-            # 获取 dem_costmap.txt 的路径
+
             dem_costmap_path = dem_build_dir / "dem_costmap.txt"
 
-            # 记录局部观测
             local_obstacle_observations.append({
                 "raw_costmap_path": str(dem_costmap_path),
                 "pose_xy_yaw": (current_x, current_y, current_yaw),
@@ -320,11 +353,9 @@ def main():
                 "resolution": LOCAL_DEM_RESOLUTION,
             })
 
-            # 保存局部 costmap 和全局融合 artifacts
             save_local_costmap_artifacts(str(dem_costmap_path), str(dem_build_dir))
             save_global_merge_artifacts(base_global_costmap, local_obstacle_observations, str(dem_build_dir))
 
-            # 生成可视化文件（无论是否有路径都生成基础可视化，有路径时生成完整可视化）
             visualize_planning_results(
                 dem_path=dem_txt_path,
                 costmap_path=str(dem_costmap_path),
@@ -336,10 +367,8 @@ def main():
                 has_path=has_path,
             )
 
-            # 恢复逻辑（只在需要时创建 path_replan 文件夹）
             recovery = None
             if not has_path:
-                # 只有失败时才调用恢复逻辑
                 recovery = recover_local_plan(
                     local_path_planner=local_path_planner,
                     base_global_costmap=base_global_costmap,
@@ -361,7 +390,6 @@ def main():
                     is_final_goal_stage=is_final_goal_stage,
                 )
             else:
-                # 成功时直接构造恢复结果
                 recovery = {
                     "mode": "LOCAL_OK",
                     "path_points_dem": path_points_dem,
@@ -403,7 +431,6 @@ def main():
                 start_z_build=current_z,
             )
 
-            # 画局部路径（紫色）
             draw_local_path(client, local_path_points_world, color=(1, 0, 1))
             print(f"局部路径已转换到世界坐标，共 {len(local_path_points_world)} 个点")
 

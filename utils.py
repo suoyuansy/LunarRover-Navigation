@@ -7,12 +7,11 @@ import math
 import numpy as np
 import os
 from datetime import datetime
-from pathlib import Path
 
 try:
     from config import (
         DEM_DATA, DEM_ROWS, DEM_COLS, ORIGIN_HEIGHT,
-        OUTPUT_ROOT_DIR, ENABLE_DEM_NPY_CACHE
+        OUTPUT_ROOT_DIR
     )
 except ImportError:
     DEM_DATA = None
@@ -20,7 +19,6 @@ except ImportError:
     DEM_COLS = None
     ORIGIN_HEIGHT = 0.0
     OUTPUT_ROOT_DIR = "local_planningpath"
-    ENABLE_DEM_NPY_CACHE = True
 
 
 # ========================================
@@ -126,31 +124,12 @@ def read_dem_file(filename="dem.txt"):
         raise FileNotFoundError(f"DEM 文件 {filename} 不存在")
 
     filename = os.path.abspath(filename)
-    cache_path = filename + ".npy"
 
-    use_cache = False
-    if ENABLE_DEM_NPY_CACHE and os.path.exists(cache_path):
-        try:
-            if os.path.getmtime(cache_path) >= os.path.getmtime(filename):
-                use_cache = True
-        except Exception:
-            use_cache = False
+    print("从 txt 读取 DEM...")
+    DEM_DATA = np.loadtxt(filename, dtype=np.float32)
 
-    if use_cache:
-        print(f"检测到 DEM 缓存，直接读取: {cache_path}")
-        DEM_DATA = np.load(cache_path)
-    else:
-        print("从 txt 读取 DEM...")
-        DEM_DATA = np.loadtxt(filename, dtype=np.float32)
-        if DEM_DATA.ndim == 1:
-            DEM_DATA = DEM_DATA.reshape(1, -1)
-
-        if ENABLE_DEM_NPY_CACHE:
-            try:
-                np.save(cache_path, DEM_DATA)
-                print(f"已生成 DEM 缓存: {cache_path}")
-            except Exception as e:
-                print(f"保存 DEM 缓存失败: {e}")
+    if DEM_DATA.ndim == 1:
+        DEM_DATA = DEM_DATA.reshape(1, -1)
 
     DEM_ROWS, DEM_COLS = DEM_DATA.shape
     print(f"读取完成，数据总共 {DEM_ROWS} 行 {DEM_COLS} 列")
