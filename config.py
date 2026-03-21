@@ -25,7 +25,7 @@ GLOBAL_OUTPUT_DIR = PROJECT_ROOT / "global_path_file"
 # 是否启用 C++ 全局交互路径规划
 # False: 不调用 C++，直接读取 global_path_file 下已有的 dem/path/costmap
 # True : 先调用 C++ 全局交互规划器，再读取 global_path_file 下结果
-ENABLE_CPP_GLOBAL_PATH_PLANNING = True
+ENABLE_CPP_GLOBAL_PATH_PLANNING = False
 
 # 全局 DEM 分辨率（米）
 GLOBAL_DEM_RESOLUTION = 1.0
@@ -100,7 +100,7 @@ LOCAL_SOFTEN_DIRNAME = "local_replan(soften_obstacles)"
 GLOBAL_REPLAN_DIRNAME = "global_path_replan"
 
 # 候选终点搜索最大半径（栅格）
-CANDIDATE_SEARCH_MAX_RADIUS_CELLS = 8
+CANDIDATE_SEARCH_MAX_RADIUS_CELLS = 10
 
 # 终点评分时的邻域统计半径（栅格）
 CLEARANCE_NEIGHBORHOOD_RADIUS_CELLS = 10
@@ -111,13 +111,12 @@ CLEARANCE_NEIGHBORHOOD_RADIUS_CELLS = 10
 # 注意：启用 C++ 全局交互规划后，最终仍然会从 global_path_file/costmap.txt 读取
 GLOBAL_COSTMAP_FILENAME = "costmap.txt"
 GLOBAL_COSTMAP_RESOLUTION = 1.0
-GLOBAL_OBSTACLE_INFLATION_RADIUS = 1
 
-# 全局重规划时：以“原局部终点之后 3 个全局路径点”作为连接点
-GLOBAL_REPLAN_SKIP_POINTS = 3
+# 全局重规划时：以“原局部终点之后 5 个全局路径点”作为连接点
+GLOBAL_REPLAN_SKIP_POINTS = 5
 
-# 软化障碍时把 1 改成 0.99
-REVISION_SOFT_COST = 0.99
+# 软化障碍时把 1 改成 0.9
+REVISION_SOFT_COST = 0.9
 
 # 局部 / 全局起点软化的最大尝试半径
-START_RELAX_MAX_RADIUS_CELLS = 20
+START_RELAX_MAX_RADIUS_CELLS = 30

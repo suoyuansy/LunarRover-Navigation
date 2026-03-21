@@ -94,19 +94,25 @@ def recover_local_plan(
         if is_final_goal_stage:
             return "FINAL_GOAL_UNREACHABLE", None
 
-        global_status, new_waypoints_with_yaw, reconnect_idx = run_global_replan(
+        global_status, new_waypoints_with_yaw, reconnect_idx, inserted_start_idx, inserted_end_idx = run_global_replan(
             local_path_planner=local_path_planner,
             base_global_costmap=base_global_costmap,
             local_obstacle_observations=local_obstacle_observations,
             current_world_xyz=current_world_xyz,
             waypoints_with_yaw=waypoints_with_yaw,
+            current_global_idx=current_global_idx,
             original_local_goal_idx=original_goal_idx,
             output_dir=output_dir,
         )
         if global_status != "OK":
             return global_status, None
 
-        return "OK", new_waypoints_with_yaw
+        return "OK", {
+            "new_waypoints_with_yaw": new_waypoints_with_yaw,
+            "reconnect_idx": reconnect_idx,
+            "inserted_start_idx": inserted_start_idx,
+            "inserted_end_idx": inserted_end_idx,
+        }
 
     # 辅助函数：尝试软化起点（局部DEM，一次性）
     def try_soften_start_local(costmap_path, output_dir, max_radius):
@@ -182,7 +188,7 @@ def recover_local_plan(
 
         # 第三步：全局重规划
         global_replan_dir = path_replan_root / GLOBAL_REPLAN_DIRNAME
-        global_status, new_waypoints = try_global_replan(str(global_replan_dir))
+        global_status, global_replan_result = try_global_replan(str(global_replan_dir))
         if global_status == "OK":
             return {
                 "mode": "GLOBAL_REPLAN_OK",
@@ -190,7 +196,10 @@ def recover_local_plan(
                 "selected_goal_world": None,
                 "selected_goal_global_idx": None,
                 "active_costmap_path": None,
-                "new_waypoints_with_yaw": new_waypoints,
+                "new_waypoints_with_yaw": global_replan_result["new_waypoints_with_yaw"],
+                "reconnect_idx": global_replan_result["reconnect_idx"],
+                "inserted_start_idx": global_replan_result["inserted_start_idx"],
+                "inserted_end_idx": global_replan_result["inserted_end_idx"],
             }
 
         return {"mode": global_status}
@@ -234,11 +243,18 @@ def recover_local_plan(
 
         # 第三步：全局重规划
         global_replan_dir = path_replan_root / GLOBAL_REPLAN_DIRNAME
-        global_status, new_waypoints = try_global_replan(str(global_replan_dir))
+        global_status, global_replan_result = try_global_replan(str(global_replan_dir))
         if global_status == "OK":
             return {
                 "mode": "GLOBAL_REPLAN_OK",
-                "new_waypoints_with_yaw": new_waypoints,
+                "path_points_dem": None,
+                "selected_goal_world": None,
+                "selected_goal_global_idx": None,
+                "active_costmap_path": None,
+                "new_waypoints_with_yaw": global_replan_result["new_waypoints_with_yaw"],
+                "reconnect_idx": global_replan_result["reconnect_idx"],
+                "inserted_start_idx": global_replan_result["inserted_start_idx"],
+                "inserted_end_idx": global_replan_result["inserted_end_idx"],
             }
 
         return {"mode": global_status}
@@ -270,11 +286,18 @@ def recover_local_plan(
 
         # 第三步：全局重规划
         global_replan_dir = path_replan_root / GLOBAL_REPLAN_DIRNAME
-        global_status, new_waypoints = try_global_replan(str(global_replan_dir))
+        global_status, global_replan_result = try_global_replan(str(global_replan_dir))
         if global_status == "OK":
             return {
                 "mode": "GLOBAL_REPLAN_OK",
-                "new_waypoints_with_yaw": new_waypoints,
+                "path_points_dem": None,
+                "selected_goal_world": None,
+                "selected_goal_global_idx": None,
+                "active_costmap_path": None,
+                "new_waypoints_with_yaw": global_replan_result["new_waypoints_with_yaw"],
+                "reconnect_idx": global_replan_result["reconnect_idx"],
+                "inserted_start_idx": global_replan_result["inserted_start_idx"],
+                "inserted_end_idx": global_replan_result["inserted_end_idx"],
             }
 
         return {"mode": global_status}
@@ -330,11 +353,18 @@ def recover_local_plan(
 
         # 第四步：全局重规划
         global_replan_dir = path_replan_root / GLOBAL_REPLAN_DIRNAME
-        global_status, new_waypoints = try_global_replan(str(global_replan_dir))
+        global_status, global_replan_result = try_global_replan(str(global_replan_dir))
         if global_status == "OK":
             return {
                 "mode": "GLOBAL_REPLAN_OK",
-                "new_waypoints_with_yaw": new_waypoints,
+                "path_points_dem": None,
+                "selected_goal_world": None,
+                "selected_goal_global_idx": None,
+                "active_costmap_path": None,
+                "new_waypoints_with_yaw": global_replan_result["new_waypoints_with_yaw"],
+                "reconnect_idx": global_replan_result["reconnect_idx"],
+                "inserted_start_idx": global_replan_result["inserted_start_idx"],
+                "inserted_end_idx": global_replan_result["inserted_end_idx"],
             }
 
         return {"mode": global_status}

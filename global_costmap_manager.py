@@ -9,7 +9,6 @@ import cv2
 
 from config import (
     GLOBAL_COSTMAP_RESOLUTION,
-    GLOBAL_OBSTACLE_INFLATION_RADIUS,
     GLOBAL_REPLAN_SKIP_POINTS,
 )
 from coordinate_transform import dem_grid_to_local, local_to_world
@@ -37,15 +36,10 @@ def inside_global_costmap(costmap, col, row):
     rows, cols = costmap.shape
     return 0 <= col < cols and 0 <= row < rows
 
-
-def inflate_obstacle_to_global_costmap(global_costmap, col, row, radius=GLOBAL_OBSTACLE_INFLATION_RADIUS):
+def inflate_obstacle_to_global_costmap(global_costmap, col, row):
     rows, cols = global_costmap.shape
-    x_min = max(0, col - radius)
-    x_max = min(cols - 1, col + radius)
-    y_min = max(0, row - radius)
-    y_max = min(rows - 1, row + radius)
-    global_costmap[y_min:y_max + 1, x_min:x_max + 1] = 1.0
-
+    if 0 <= col < cols and 0 <= row < rows:
+        global_costmap[row, col] = 1.0
 
 def fuse_single_local_observation(global_costmap, observation):
     """
@@ -97,7 +91,7 @@ def fuse_single_local_observation(global_costmap, observation):
         gcol, grow = world_to_global_costmap_cell(x_world, y_world)
 
         if inside_global_costmap(global_costmap, gcol, grow):
-            inflate_obstacle_to_global_costmap(global_costmap, gcol, grow, GLOBAL_OBSTACLE_INFLATION_RADIUS)
+            inflate_obstacle_to_global_costmap(global_costmap, gcol, grow)
 
     return (min_c, min_r, max_c, max_r)
 
@@ -126,7 +120,7 @@ def save_global_costmap_merge_visualization(costmap, current_box, output_image_p
     # 只画当前融合的框（整个局部DEM范围）
     if current_box:
         x1, y1, x2, y2 = current_box
-        cv2.rectangle(color, (x1, y1), (x2, y2), (0, 0, 255), 2)
+        cv2.rectangle(color, (x1, y1), (x2, y2), (0, 0, 255), 1)
 
     cv2.imwrite(str(output_image_path), color)
 
@@ -186,11 +180,33 @@ def build_waypoints_with_yaw_from_global_path_cells(path_points_cells):
     return waypoints_with_yaw
 
 
-def merge_replanned_global_path(new_segment_waypoints, old_waypoints_with_yaw, reconnect_global_idx):
-    """合并重规划后的全局路径"""
-    merged = list(new_segment_waypoints)
+def merge_replanned_global_path(
+    new_segment_waypoints,
+    old_waypoints_with_yaw,
+    current_global_idx,
+    reconnect_global_idx,
+):
+    """
+    合并重规划后的全局路径：
+    - 保留旧路径前缀 [0, current_global_idx]
+    - 用 new_segment_waypoints 替换中间段
+    - 接回旧路径尾部 [reconnect_global_idx + 1, end]
+
+    返回:
+    - merged_waypoints
+    - inserted_start_idx
+    - inserted_end_idx
+    """
+    prefix = list(old_waypoints_with_yaw[: current_global_idx + 1])
+
+    # new_segment_waypoints[0] 基本对应当前位置，避免与 prefix 最后一个点重复
+    inserted_segment = list(new_segment_waypoints[1:]) if len(new_segment_waypoints) >= 2 else []
+
+    suffix = []
     if reconnect_global_idx + 1 < len(old_waypoints_with_yaw):
-        merged.extend(old_waypoints_with_yaw[reconnect_global_idx + 1:])
+        suffix = list(old_waypoints_with_yaw[reconnect_global_idx + 1:])
+
+    merged = prefix + inserted_segment + suffix
 
     refined = []
     for i, (x, y, z, _) in enumerate(merged):
@@ -200,8 +216,11 @@ def merge_replanned_global_path(new_segment_waypoints, old_waypoints_with_yaw, r
         else:
             yaw = refined[-1][3] if refined else 0.0
         refined.append((x, y, z, yaw))
-    return refined
 
+    inserted_start_idx = current_global_idx
+    inserted_end_idx = current_global_idx + len(inserted_segment)
+
+    return refined, inserted_start_idx, inserted_end_idx
 
 def save_global_replan_path_visualization(costmap_path, start, goal, path_points, output_path, old_waypoints=None):
     """
@@ -215,13 +234,13 @@ def save_global_replan_path_visualization(costmap_path, start, goal, path_points
     # 画起点和终点
     sx, sy = start
     gx, gy = goal
-    cv2.circle(color, (sx, sy), 5, (255, 0, 0), -1)
-    cv2.circle(color, (gx, gy), 5, (0, 255, 0), -1)
+    cv2.circle(color, (sx, sy), 1, (255, 0, 255), -1)
+    cv2.circle(color, (gx, gy), 1, (0, 0, 255), -1)
     
-    # 画新路径（红线）
+    # 画新路径（绿线）
     if path_points and len(path_points) >= 2:
         pts = np.array(path_points, dtype=np.int32).reshape(-1, 1, 2)
-        cv2.polylines(color, [pts], isClosed=False, color=(0, 0, 255), thickness=2)
+        cv2.polylines(color, [pts], isClosed=False, color=(0, 255, 0), thickness=1)
     
     # 画旧全局路径（蓝线）- 如果有
     if old_waypoints and len(old_waypoints) >= 2:
@@ -241,6 +260,7 @@ def run_global_replan(
     local_obstacle_observations,
     current_world_xyz,
     waypoints_with_yaw,
+    current_global_idx,
     original_local_goal_idx,
     output_dir,
 ):
@@ -288,6 +308,7 @@ def run_global_replan(
             output_dir=output_dir,
             revision_filename="soften_global_costmap.txt",
             stop_when_start_cleared_only=False,
+            gradual=True,
         )
         used_costmap_path = soften_costmap_path
         print(f"全局重规划起点软化结束，状态: {status}，半径: {used_radius}")
@@ -311,12 +332,17 @@ def run_global_replan(
         return status, None, reconnect_idx
 
     new_segment_waypoints = build_waypoints_with_yaw_from_global_path_cells(path_points)
-    merged_waypoints = merge_replanned_global_path(new_segment_waypoints, waypoints_with_yaw, reconnect_idx)
+
+    merged_waypoints, inserted_start_idx, inserted_end_idx = merge_replanned_global_path(
+        new_segment_waypoints=new_segment_waypoints,
+        old_waypoints_with_yaw=waypoints_with_yaw,
+        current_global_idx=current_global_idx,
+        reconnect_global_idx=reconnect_idx,
+    )
 
     final_path_txt = output_dir / "path.txt"
     text = "->".join(f"({c},{r})" for c, r in path_points)
     final_path_txt.write_text(text, encoding="utf-8")
-
     # 删除临时全局融合 costmap，不再保留
     if temp_fused_costmap_path.exists():
         try:
@@ -324,4 +350,4 @@ def run_global_replan(
         except Exception:
             pass
 
-    return "OK", merged_waypoints, reconnect_idx
+    return "OK", merged_waypoints, reconnect_idx, inserted_start_idx, inserted_end_idx

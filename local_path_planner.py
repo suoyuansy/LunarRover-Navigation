@@ -160,7 +160,6 @@ class LocalPathPlanner:
     # 原有：局部 DEM 路径规划
     # ============================================================
     def plan_path(self, dem_path, start_col, start_row, goal_col, goal_row, resolution, output_dir):
-        """基于 DEM 进行路径规划"""
         dem_path = Path(dem_path)
         output_dir = Path(output_dir)
 
@@ -170,6 +169,15 @@ class LocalPathPlanner:
             return "DEM_NOT_FOUND", None
 
         output_dir.mkdir(parents=True, exist_ok=True)
+
+        # 关键：删除旧输出，避免误读残留文件
+        for name in ("path.txt", "costmap.txt"):
+            f = output_dir / name
+            if f.exists():
+                try:
+                    f.unlink()
+                except Exception:
+                    pass
 
         cmd = [
             str(self.exe_path),
@@ -190,9 +198,8 @@ class LocalPathPlanner:
         print(f"  输出: {output_dir}")
 
         return self._run_and_parse(cmd, output_dir, expect_costmap=True)
-
+    
     def plan_path_from_costmap(self, costmap_path, start_col, start_row, goal_col, goal_row, output_dir):
-        """基于 costmap 进行路径规划"""
         costmap_path = Path(costmap_path)
         output_dir = Path(output_dir)
 
@@ -202,6 +209,14 @@ class LocalPathPlanner:
             return "COSTMAP_NOT_FOUND", None
 
         output_dir.mkdir(parents=True, exist_ok=True)
+
+        # 关键：删除旧 path.txt，避免读取上一次结果
+        path_file = output_dir / "path.txt"
+        if path_file.exists():
+            try:
+                path_file.unlink()
+            except Exception:
+                pass
 
         cmd = [
             str(self.exe_path),
@@ -220,7 +235,6 @@ class LocalPathPlanner:
         print(f"  输出: {output_dir}")
 
         return self._run_and_parse(cmd, output_dir, expect_costmap=False)
-
     def plan_path_from_costmap_with_start_relaxation(
         self,
         costmap_path,
@@ -281,6 +295,9 @@ class LocalPathPlanner:
                     soft_cost=REVISION_SOFT_COST,
                 )
                 save_costmap_txt(revised, revision_costmap_path)
+
+                print(f"\n[全局起点软化] radius = {radius}")
+                print(f"  costmap: {revision_costmap_path}")
 
                 status, path_points = self.plan_path_from_costmap(
                     costmap_path=revision_costmap_path,

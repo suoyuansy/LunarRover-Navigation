@@ -403,11 +403,48 @@ def main():
 
             if mode == "GLOBAL_REPLAN_OK":
                 waypoints_with_yaw = recovery["new_waypoints_with_yaw"]
-                total_segments = len(waypoints_with_yaw) - 1
-                current_global_idx = 0
+                inserted_start_idx = recovery["inserted_start_idx"]
+                inserted_end_idx = recovery["inserted_end_idx"]
 
-                draw_planned_path(client, waypoints_with_yaw, color=(0, 0, 1))
-                print("已切换为新的全局路径，继续下一轮规划")
+                total_segments = len(waypoints_with_yaw) - 1
+
+                # 不重置 current_global_idx，保持当前全局进度
+                # 旧蓝线不重画；只把新插入的重规划段画成绿色
+                replanned_segment = waypoints_with_yaw[inserted_start_idx: inserted_end_idx + 1]
+                if len(replanned_segment) >= 2:
+                    print("绘制新的全局重规划段（绿色）...")
+                    draw_planned_path(client, replanned_segment, color=(0, 1, 0))
+
+                print("已切换为新的全局路径")
+
+                # 关键：先沿新全局路径前进一个点，收集点云，再进入下一轮 DEM 构建
+                next_global_idx = min(current_global_idx + 1, total_segments)
+                if next_global_idx > current_global_idx:
+                    print(f"\n{'=' * 70}")
+                    print(f"【全局重规划后预行走】从全局路径点 {current_global_idx} 到 {next_global_idx}")
+                    print(f"{'=' * 70}")
+
+                    wp_target = waypoints_with_yaw[next_global_idx]
+
+                    current_x, current_y, current_z, current_yaw = move_to_target_constant_yaw(
+                        client=client,
+                        accumulator=pointcloud_accumulator,
+                        current_x=current_x,
+                        current_y=current_y,
+                        current_z=current_z,
+                        current_yaw=current_yaw,
+                        target_x=wp_target[0],
+                        target_y=wp_target[1],
+                        target_z=wp_target[2],
+                        target_yaw=wp_target[3],
+                        trajectory_points=trajectory_points,
+                        segment_idx=next_global_idx,
+                    )
+                    current_global_idx = next_global_idx
+                    print(f"已沿新全局路径前进到点 {current_global_idx}，继续下一轮规划")
+                else:
+                    print("新全局路径已到末端，无需预行走")
+
                 continue
 
             if mode == "FINAL_GOAL_UNREACHABLE":
