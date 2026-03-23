@@ -25,7 +25,7 @@ GLOBAL_OUTPUT_DIR = PROJECT_ROOT / "global_path_file"
 # 是否启用 C++ 全局交互路径规划
 # False: 不调用 C++，直接读取 global_path_file 下已有的 dem/path/costmap
 # True : 先调用 C++ 全局交互规划器，再读取 global_path_file 下结果
-ENABLE_CPP_GLOBAL_PATH_PLANNING = False
+ENABLE_CPP_GLOBAL_PATH_PLANNING = True
 
 # 全局 DEM 分辨率（米）
 GLOBAL_DEM_RESOLUTION = 1.0

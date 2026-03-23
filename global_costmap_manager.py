@@ -146,7 +146,7 @@ def save_global_merge_artifacts(base_global_costmap, local_obstacle_observations
     fused_costmap, boxes = build_fused_global_costmap(base_global_costmap, local_obstacle_observations)
 
     merge_txt = dem_build_dir / "global_dem_costmap_merge.txt"
-    merge_vis = dem_build_dir / "global_dem_costmap_merge_vis.jpg"
+    merge_vis = dem_build_dir / "global_dem_costmap_merge_vis.png"
 
     save_costmap_txt(fused_costmap, merge_txt)
     
@@ -313,7 +313,7 @@ def run_global_replan(
         used_costmap_path = soften_costmap_path
         print(f"全局重规划起点软化结束，状态: {status}，半径: {used_radius}")
 
-    path_vis_path = output_dir / "path.jpg"
+    path_vis_path = output_dir / "path.png"
     save_global_replan_path_visualization(
         costmap_path=used_costmap_path,
         start=(start_col, start_row),

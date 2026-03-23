@@ -307,6 +307,172 @@ def save_costmap_path_visualization(costmap_path, start, goal, path_points, outp
         cv2.imwrite(str(output_dir / f"{prefix}_with_start_goal_and_path.jpg"), path_vis)
 
 
+def world_to_global_costmap_cell(x_world, y_world, resolution=1.0):
+    """将世界坐标转换为全局costmap栅格坐标"""
+    col = int(round(x_world / resolution))
+    row = int(round(y_world / resolution))
+    return col, row
+
+
+def draw_global_path_on_costmap(costmap, waypoints_with_yaw, output_path, resolution=1.0):
+    """
+    在全局costmap上用蓝线绘制全局路径点
+    
+    参数：
+        costmap: 全局costmap数组 (H, W)
+        waypoints_with_yaw: [(x, y, z, yaw), ...] 全局路径点（世界坐标）
+        output_path: 输出图片路径
+        resolution: costmap分辨率（米/栅格）
+    """
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    gray_img = make_costmap_gray_image(costmap)
+    color_img = cv2.cvtColor(gray_img, cv2.COLOR_GRAY2BGR)
+    
+    if len(waypoints_with_yaw) < 2:
+        cv2.imwrite(str(output_path), color_img)
+        return
+    
+    # 将世界坐标的路径点转换为costmap栅格坐标
+    path_points_grid = []
+    for x, y, z, yaw in waypoints_with_yaw:
+        col, row = world_to_global_costmap_cell(x, y, resolution)
+        path_points_grid.append((col, row))
+    
+    # 绘制路径线
+    for i in range(len(path_points_grid) - 1):
+        pt1 = tuple(path_points_grid[i])
+        pt2 = tuple(path_points_grid[i + 1])
+        # 检查点是否在图像范围内
+        h, w = color_img.shape[:2]
+        if (0 <= pt1[0] < w and 0 <= pt1[1] < h and 
+            0 <= pt2[0] < w and 0 <= pt2[1] < h):
+            cv2.line(color_img, pt1, pt2, (255, 0, 0), 1)  # 蓝线
+    
+    # 绘制路径点
+    for i, (col, row) in enumerate(path_points_grid):
+        if 0 <= col < color_img.shape[1] and 0 <= row < color_img.shape[0]:
+            cv2.circle(color_img, (col, row), 1, (255, 0, 0), -1)  # 蓝点
+    
+    cv2.imwrite(str(output_path), color_img)
+    print(f"已保存全局路径可视化: {output_path}")
+
+
+def draw_actual_path_on_costmap(costmap, trajectory_points, output_path, resolution=1.0):
+    """
+    在全局costmap上用红线绘制实际走过的路径
+    
+    参数：
+        costmap: 融合后的全局costmap数组 (H, W)
+        trajectory_points: [(x, y, z), ...] 实际轨迹点（世界坐标）
+        output_path: 输出图片路径
+        resolution: costmap分辨率（米/栅格）
+    """
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    gray_img = make_costmap_gray_image(costmap)
+    color_img = cv2.cvtColor(gray_img, cv2.COLOR_GRAY2BGR)
+    
+    if len(trajectory_points) < 2:
+        cv2.imwrite(str(output_path), color_img)
+        return
+    
+    # 将世界坐标的轨迹点转换为costmap栅格坐标
+    trajectory_points_grid = []
+    for point in trajectory_points:
+        if len(point) >= 2:
+            x, y = point[0], point[1]
+            col, row = world_to_global_costmap_cell(x, y, resolution)
+            trajectory_points_grid.append((col, row))
+    
+    # 绘制轨迹线
+    for i in range(len(trajectory_points_grid) - 1):
+        pt1 = tuple(trajectory_points_grid[i])
+        pt2 = tuple(trajectory_points_grid[i + 1])
+        # 检查点是否在图像范围内
+        h, w = color_img.shape[:2]
+        if (0 <= pt1[0] < w and 0 <= pt1[1] < h and 
+            0 <= pt2[0] < w and 0 <= pt2[1] < h):
+            cv2.line(color_img, pt1, pt2, (0, 0, 255), 1)  # 红线
+    
+    # 绘制轨迹点
+    for i, (col, row) in enumerate(trajectory_points_grid):
+        if 0 <= col < color_img.shape[1] and 0 <= row < color_img.shape[0]:
+            cv2.circle(color_img, (col, row), 1, (0, 0, 255), -1)  # 红点
+    
+    cv2.imwrite(str(output_path), color_img)
+    print(f"已保存实际路径可视化: {output_path}")
+
+
+def draw_both_paths_on_costmap(costmap, waypoints_with_yaw, trajectory_points, output_path, resolution=1.0):
+    """
+    在融合后的全局costmap上同时绘制全局路径（蓝线）和实际走过的路径（红线）
+    
+    参数：
+        costmap: 融合后的全局costmap数组 (H, W)
+        waypoints_with_yaw: [(x, y, z, yaw), ...] 全局路径点（世界坐标）
+        trajectory_points: [(x, y, z), ...] 实际轨迹点（世界坐标）
+        output_path: 输出图片路径
+        resolution: costmap分辨率（米/栅格）
+    """
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    gray_img = make_costmap_gray_image(costmap)
+    color_img = cv2.cvtColor(gray_img, cv2.COLOR_GRAY2BGR)
+    
+    h, w = color_img.shape[:2]
+    
+    # 绘制全局路径（蓝线）
+    if len(waypoints_with_yaw) >= 2:
+        path_points_grid = []
+        for x, y, z, yaw in waypoints_with_yaw:
+            col, row = world_to_global_costmap_cell(x, y, resolution)
+            path_points_grid.append((col, row))
+        
+        for i in range(len(path_points_grid) - 1):
+            pt1 = tuple(path_points_grid[i])
+            pt2 = tuple(path_points_grid[i + 1])
+            if (0 <= pt1[0] < w and 0 <= pt1[1] < h and 
+                0 <= pt2[0] < w and 0 <= pt2[1] < h):
+                cv2.line(color_img, pt1, pt2, (255, 0, 0), 1)  # 蓝线
+        
+        # 绘制全局路径点
+        for col, row in path_points_grid:
+            if 0 <= col < w and 0 <= row < h:
+                cv2.circle(color_img, (col, row), 1, (255, 0, 0), -1)  # 蓝点
+    
+    # 绘制实际轨迹（红线）
+    if len(trajectory_points) >= 2:
+        trajectory_points_grid = []
+        for point in trajectory_points:
+            if len(point) >= 2:
+                x, y = point[0], point[1]
+                col, row = world_to_global_costmap_cell(x, y, resolution)
+                trajectory_points_grid.append((col, row))
+        
+        for i in range(len(trajectory_points_grid) - 1):
+            pt1 = tuple(trajectory_points_grid[i])
+            pt2 = tuple(trajectory_points_grid[i + 1])
+            if (0 <= pt1[0] < w and 0 <= pt1[1] < h and 
+                0 <= pt2[0] < w and 0 <= pt2[1] < h):
+                cv2.line(color_img, pt1, pt2, (0, 0, 255), 1)  # 红线
+        
+        # 绘制实际轨迹点
+        for col, row in trajectory_points_grid:
+            if 0 <= col < w and 0 <= row < h:
+                cv2.circle(color_img, (col, row), 1, (0, 0, 255), -1)  # 红点
+    
+    # 添加图例
+    cv2.putText(color_img, "Blue: Global Path", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)
+    cv2.putText(color_img, "Red: Actual Path", (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+    
+    cv2.imwrite(str(output_path), color_img)
+    print(f"已保存对比路径可视化: {output_path}")
+
+
 def visualize_planning_results(dem_path, costmap_path, planning_output_dir, start_col, start_row, goal_col, goal_row, has_path):
     """
     可视化规划结果
