@@ -266,17 +266,19 @@ def run_global_replan(
 ):
     """
     执行全局路径重规划
-    返回: (status, new_waypoints_with_yaw, reconnect_idx)
+    返回:
+        (status, new_waypoints_with_yaw, reconnect_idx, inserted_start_idx, inserted_end_idx)
     """
     from pathlib import Path
     from visualization import save_costmap_txt
+    from config import LOCAL_GLOBAL_REPLAN_METHOD
 
     output_dir = Path(output_dir)
     ensure_dir(output_dir)
 
     fused_global_costmap, _ = build_fused_global_costmap(base_global_costmap, local_obstacle_observations)
 
-    # 不再正式保存 global_costmap.txt，只生成一个临时文件供 C++ 重规划使用
+    # 仅生成临时文件供 C++ 重规划使用
     temp_fused_costmap_path = output_dir / "_temp_global_costmap_for_replan.txt"
     save_costmap_txt(fused_global_costmap, temp_fused_costmap_path)
 
@@ -287,7 +289,7 @@ def run_global_replan(
     start_col, start_row = world_to_global_costmap_cell(current_world_xyz[0], current_world_xyz[1])
     goal_col, goal_row = world_to_global_costmap_cell(reconnect_world[0], reconnect_world[1])
 
-    status, path_points = local_path_planner.plan_path_from_costmap(
+    status, path_points = local_path_planner.plan_global_replan_from_costmap(
         costmap_path=temp_fused_costmap_path,
         start_col=start_col,
         start_row=start_row,
@@ -309,6 +311,7 @@ def run_global_replan(
             revision_filename="soften_global_costmap.txt",
             stop_when_start_cleared_only=False,
             gradual=True,
+            method=LOCAL_GLOBAL_REPLAN_METHOD,
         )
         used_costmap_path = soften_costmap_path
         print(f"全局重规划起点软化结束，状态: {status}，半径: {used_radius}")
@@ -320,7 +323,7 @@ def run_global_replan(
         goal=(goal_col, goal_row),
         path_points=path_points,
         output_path=path_vis_path,
-        old_waypoints=waypoints_with_yaw if status == "OK" else None
+        old_waypoints=waypoints_with_yaw if status == "OK" else None,
     )
 
     if status != "OK" or not path_points:
@@ -329,7 +332,7 @@ def run_global_replan(
                 temp_fused_costmap_path.unlink()
             except Exception:
                 pass
-        return status, None, reconnect_idx
+        return status, None, reconnect_idx, None, None
 
     new_segment_waypoints = build_waypoints_with_yaw_from_global_path_cells(path_points)
 
@@ -343,7 +346,7 @@ def run_global_replan(
     final_path_txt = output_dir / "path.txt"
     text = "->".join(f"({c},{r})" for c, r in path_points)
     final_path_txt.write_text(text, encoding="utf-8")
-    # 删除临时全局融合 costmap，不再保留
+
     if temp_fused_costmap_path.exists():
         try:
             temp_fused_costmap_path.unlink()

@@ -70,7 +70,7 @@ LIDAR_MAX_Z = 100.0
 # ========================================
 # 局部 DEM 参数
 # ========================================
-LOCAL_DEM_RANGE = 10.0
+LOCAL_DEM_RANGE = 8.0
 LOCAL_DEM_RESOLUTION = 0.1
 LOCAL_DEM_GRID_SIZE = int((LOCAL_DEM_RANGE * 2) / LOCAL_DEM_RESOLUTION)
 
@@ -91,12 +91,31 @@ PATH_PLANNING_TIMEOUT = 300.0
 # 雷达传感器离地面的高度（Z轴向下为正）
 LIDAR_HEIGHT_OFFSET = 1.5
 
+
+# ========================================
+# 路径规划算法配置 (新增)
+# ========================================
+# 算法ID: 0=AStar, 1=DStarLite, 2=HybridAStar, 3=BidirectionalAStar
+
+# 全局路径规划算法
+GLOBAL_PLANNER_METHOD = 1  # DStarLite
+
+# 局部路径规划第一阶段算法（快速搜索）
+LOCAL_PLANNER_METHOD_PHASE1 = 3  # BidirectionalAStar
+
+# 局部路径规划第二阶段算法（运动学优化）
+LOCAL_PLANNER_METHOD_PHASE2 = 2  # HybridAStar
+
+# 局部全局重规划算法
+LOCAL_GLOBAL_REPLAN_METHOD = 3  # BidirectionalAStar
+
 # ========================================
 # 终点挪动与评分参数
 # ========================================
 PATH_REPLAN_ROOT_DIRNAME = "path_replan"
 LOCAL_MOVE_ENDPOINT_DIRNAME = "local_replan(move_the_endpoint)"
 LOCAL_SOFTEN_DIRNAME = "local_replan(soften_obstacles)"
+LOCAL_HYBRID_DIRNAME = "local_replan(HybridAStar)"
 GLOBAL_REPLAN_DIRNAME = "global_path_replan"
 
 # 候选终点搜索最大半径（栅格）

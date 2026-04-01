@@ -316,8 +316,8 @@ def world_to_global_costmap_cell(x_world, y_world, resolution=1.0):
 
 def draw_global_path_on_costmap(costmap, waypoints_with_yaw, output_path, resolution=1.0):
     """
-    在全局costmap上用蓝线绘制全局路径点
-    
+    在全局costmap上绘制全局路径，并标注起点与终点
+
     参数：
         costmap: 全局costmap数组 (H, W)
         waypoints_with_yaw: [(x, y, z, yaw), ...] 全局路径点（世界坐标）
@@ -326,35 +326,69 @@ def draw_global_path_on_costmap(costmap, waypoints_with_yaw, output_path, resolu
     """
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    
+
     gray_img = make_costmap_gray_image(costmap)
     color_img = cv2.cvtColor(gray_img, cv2.COLOR_GRAY2BGR)
-    
-    if len(waypoints_with_yaw) < 2:
+
+    if not waypoints_with_yaw:
         cv2.imwrite(str(output_path), color_img)
         return
-    
-    # 将世界坐标的路径点转换为costmap栅格坐标
+
+    h, w = color_img.shape[:2]
+
+    # 将世界坐标路径点转换为 costmap 栅格坐标
     path_points_grid = []
     for x, y, z, yaw in waypoints_with_yaw:
         col, row = world_to_global_costmap_cell(x, y, resolution)
         path_points_grid.append((col, row))
-    
-    # 绘制路径线
-    for i in range(len(path_points_grid) - 1):
-        pt1 = tuple(path_points_grid[i])
-        pt2 = tuple(path_points_grid[i + 1])
-        # 检查点是否在图像范围内
-        h, w = color_img.shape[:2]
-        if (0 <= pt1[0] < w and 0 <= pt1[1] < h and 
-            0 <= pt2[0] < w and 0 <= pt2[1] < h):
-            cv2.line(color_img, pt1, pt2, (255, 0, 0), 1)  # 蓝线
-    
-    # 绘制路径点
-    for i, (col, row) in enumerate(path_points_grid):
-        if 0 <= col < color_img.shape[1] and 0 <= row < color_img.shape[0]:
+
+    # 先绘制路径线（蓝色）
+    if len(path_points_grid) >= 2:
+        for i in range(len(path_points_grid) - 1):
+            pt1 = path_points_grid[i]
+            pt2 = path_points_grid[i + 1]
+
+            if (0 <= pt1[0] < w and 0 <= pt1[1] < h and
+                0 <= pt2[0] < w and 0 <= pt2[1] < h):
+                cv2.line(color_img, pt1, pt2, (255, 0, 0), 1)  # 蓝线
+
+    # 绘制路径点（蓝色）
+    for col, row in path_points_grid:
+        if 0 <= col < w and 0 <= row < h:
             cv2.circle(color_img, (col, row), 1, (255, 0, 0), -1)  # 蓝点
-    
+
+    # 标注起点和终点
+    start_col, start_row = path_points_grid[0]
+    end_col, end_row = path_points_grid[-1]
+
+    # 起点：绿色
+    if 0 <= start_col < w and 0 <= start_row < h:
+        cv2.circle(color_img, (start_col, start_row), 4, (0, 255, 0), -1)
+        cv2.putText(
+            color_img,
+            "START",
+            (start_col + 5, max(start_row - 5, 0)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.4,
+            (0, 255, 0),
+            1,
+            cv2.LINE_AA,
+        )
+
+    # 终点：红色
+    if 0 <= end_col < w and 0 <= end_row < h:
+        cv2.circle(color_img, (end_col, end_row), 4, (0, 0, 255), -1)
+        cv2.putText(
+            color_img,
+            "GOAL",
+            (end_col + 5, max(end_row - 5, 0)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.4,
+            (0, 0, 255),
+            1,
+            cv2.LINE_AA,
+        )
+
     cv2.imwrite(str(output_path), color_img)
     print(f"已保存全局路径可视化: {output_path}")
 

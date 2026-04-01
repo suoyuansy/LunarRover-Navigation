@@ -24,7 +24,9 @@ from config import (
     GLOBAL_COLOR_PNG_PATH,
     GLOBAL_OUTPUT_DIR,
     GLOBAL_DEM_RESOLUTION,
+    LOCAL_PLANNER_METHOD_PHASE1,
 )
+
 from utils import (
     read_dem_file,
     calculate_airsim_elevation,
@@ -64,7 +66,7 @@ from recovery_manager import recover_local_plan
 pointcloud_accumulator = None
 local_dem_builder = None
 local_path_planner = None
-fused_global_costmap = None  # 【新增】用于保存最后一次融合的全局costmap
+fused_global_costmap = None  # 用于保存最后一次融合的全局costmap
 
 
 def convert_dem_path_to_world(
@@ -80,7 +82,13 @@ def convert_dem_path_to_world(
     local_path_points_world = []
     for col, row in path_points_dem:
         x_local, y_local = dem_grid_to_local(col, row, dem_range, resolution)
-        x_world, y_world = local_to_world(x_local, y_local, start_world[0], start_world[1], current_yaw)
+        x_world, y_world = local_to_world(
+            x_local,
+            y_local,
+            start_world[0],
+            start_world[1],
+            current_yaw,
+        )
         z_relative = dem_grid[row, col]
         z_world = start_z_build + z_relative - LIDAR_HEIGHT_OFFSET
         local_path_points_world.append((x_world, y_world, z_world))
@@ -189,6 +197,30 @@ def reorganize_planning_output(planning_output_dir, dem_build_dir, has_path):
                 f.unlink()
 
 
+def save_final_compare_artifacts(run_dir, fused_global_costmap, trajectory_points, waypoints_with_yaw):
+    """保存实际路径与对比图"""
+    if fused_global_costmap is not None and len(trajectory_points) >= 2:
+        actual_path_png = run_dir / "actual_path.png"
+        compare_png = run_dir / "compare.png"
+
+        draw_actual_path_on_costmap(
+            costmap=fused_global_costmap,
+            trajectory_points=trajectory_points,
+            output_path=str(actual_path_png),
+            resolution=1.0,
+        )
+
+        draw_both_paths_on_costmap(
+            costmap=fused_global_costmap,
+            waypoints_with_yaw=waypoints_with_yaw,
+            trajectory_points=trajectory_points,
+            output_path=str(compare_png),
+            resolution=1.0,
+        )
+    elif fused_global_costmap is None:
+        print("警告：融合的全局costmap为空，无法保存实际路径可视化")
+
+
 def main():
     global pointcloud_accumulator, local_dem_builder, local_path_planner, fused_global_costmap
 
@@ -208,7 +240,7 @@ def main():
     print(f"总输出目录: {output_root_dir}")
     print(f"本次运行目录: {run_dir}")
 
-    # 【新增】保存全局路径可视化
+    # 保存全局路径可视化
     global_path_png = run_dir / "global_path.png"
     draw_global_path_on_costmap(
         costmap=base_global_costmap,
@@ -343,6 +375,7 @@ def main():
             planning_output_dir = dem_build_dir / "local_path_planning_result"
             ensure_dir(planning_output_dir)
 
+            # 第一阶段：局部快速搜索使用 BidirectionalAStar
             status, path_points_dem = local_path_planner.plan_path(
                 dem_path=dem_txt_path,
                 start_col=start_col,
@@ -351,6 +384,7 @@ def main():
                 goal_row=goal_row,
                 resolution=LOCAL_DEM_RESOLUTION,
                 output_dir=str(planning_output_dir),
+                method=LOCAL_PLANNER_METHOD_PHASE1,
             )
 
             has_path = (status == "OK" and path_points_dem is not None)
@@ -367,7 +401,11 @@ def main():
             })
 
             save_local_costmap_artifacts(str(dem_costmap_path), str(dem_build_dir))
-            fused_global_costmap, _, _ = save_global_merge_artifacts(base_global_costmap, local_obstacle_observations, str(dem_build_dir))  # 【新增】保存融合后的costmap
+            fused_global_costmap, _, _ = save_global_merge_artifacts(
+                base_global_costmap,
+                local_obstacle_observations,
+                str(dem_build_dir),
+            )
 
             visualize_planning_results(
                 dem_path=dem_txt_path,
@@ -380,37 +418,29 @@ def main():
                 has_path=has_path,
             )
 
-            recovery = None
-            if not has_path:
-                recovery = recover_local_plan(
-                    local_path_planner=local_path_planner,
-                    base_global_costmap=base_global_costmap,
-                    local_obstacle_observations=local_obstacle_observations,
-                    dem_grid=dem_grid,
-                    dem_build_dir=str(dem_build_dir),
-                    current_pose_xy_yaw=(current_x, current_y, current_yaw),
-                    current_world_xyz=(current_x, current_y, current_z),
-                    start_dem=(start_col, start_row),
-                    original_goal_dem=(goal_col, goal_row),
-                    original_goal_world=goal_world,
-                    initial_status=status,
-                    initial_path_points_dem=path_points_dem,
-                    initial_costmap_path=str(dem_costmap_path),
-                    waypoints_with_yaw=waypoints_with_yaw,
-                    current_global_idx=current_global_idx,
-                    original_goal_idx=goal_global_idx,
-                    lidar_height_offset=LIDAR_HEIGHT_OFFSET,
-                    is_final_goal_stage=is_final_goal_stage,
-                )
-            else:
-                recovery = {
-                    "mode": "LOCAL_OK",
-                    "path_points_dem": path_points_dem,
-                    "selected_goal_world": goal_world,
-                    "selected_goal_global_idx": goal_global_idx,
-                    "active_costmap_path": str(dem_costmap_path),
-                    "new_waypoints_with_yaw": None,
-                }
+            # 无论初始局部规划是否成功，都统一走恢复/收口逻辑：
+            # - 成功：继续跑 HybridAStar
+            # - 失败：按原恢复链处理
+            recovery = recover_local_plan(
+                local_path_planner=local_path_planner,
+                base_global_costmap=base_global_costmap,
+                local_obstacle_observations=local_obstacle_observations,
+                dem_grid=dem_grid,
+                dem_build_dir=str(dem_build_dir),
+                current_pose_xy_yaw=(current_x, current_y, current_yaw),
+                current_world_xyz=(current_x, current_y, current_z),
+                start_dem=(start_col, start_row),
+                original_goal_dem=(goal_col, goal_row),
+                original_goal_world=goal_world,
+                initial_status=status,
+                initial_path_points_dem=path_points_dem,
+                initial_costmap_path=str(dem_costmap_path),
+                waypoints_with_yaw=waypoints_with_yaw,
+                current_global_idx=current_global_idx,
+                original_goal_idx=goal_global_idx,
+                lidar_height_offset=LIDAR_HEIGHT_OFFSET,
+                is_final_goal_stage=is_final_goal_stage,
+            )
 
             mode = recovery.get("mode")
 
@@ -430,7 +460,7 @@ def main():
 
                 print("已切换为新的全局路径")
 
-                # 关键：先沿新全局路径前进一个点，收集点云，再进入下一轮 DEM 构建
+                # 先沿新全局路径前进一个点，收集点云，再进入下一轮 DEM 构建
                 next_global_idx = min(current_global_idx + 1, total_segments)
                 if next_global_idx > current_global_idx:
                     print(f"\n{'=' * 70}")
@@ -462,56 +492,21 @@ def main():
 
             if mode == "FINAL_GOAL_UNREACHABLE":
                 print(f"最终终点无法达到，已停留在 ({current_x:.2f}, {current_y:.2f}, {current_z:.2f})")
-                # 【新增】保存实际路径和对比图
-                if fused_global_costmap is not None and len(trajectory_points) >= 2:
-                    actual_path_png = run_dir / "actual_path.png"
-                    compare_png = run_dir / "compare.png"
-                    
-                    draw_actual_path_on_costmap(
-                        costmap=fused_global_costmap,
-                        trajectory_points=trajectory_points,
-                        output_path=str(actual_path_png),
-                        resolution=1.0,
-                    )
-                    
-                    draw_both_paths_on_costmap(
-                        costmap=fused_global_costmap,
-                        waypoints_with_yaw=waypoints_with_yaw,
-                        trajectory_points=trajectory_points,
-                        output_path=str(compare_png),
-                        resolution=1.0,
-                    )
-                elif fused_global_costmap is None:
-                    print("警告：融合的全局costmap为空，无法保存实际路径可视化")
+                save_final_compare_artifacts(run_dir, fused_global_costmap, trajectory_points, waypoints_with_yaw)
                 return
 
             if mode != "LOCAL_OK":
                 print(f"局部恢复失败，状态: {mode}")
-                # 【新增】保存实际路径和对比图
-                if fused_global_costmap is not None and len(trajectory_points) >= 2:
-                    actual_path_png = run_dir / "actual_path.png"
-                    compare_png = run_dir / "compare.png"
-                    
-                    draw_actual_path_on_costmap(
-                        costmap=fused_global_costmap,
-                        trajectory_points=trajectory_points,
-                        output_path=str(actual_path_png),
-                        resolution=1.0,
-                    )
-                    
-                    draw_both_paths_on_costmap(
-                        costmap=fused_global_costmap,
-                        waypoints_with_yaw=waypoints_with_yaw,
-                        trajectory_points=trajectory_points,
-                        output_path=str(compare_png),
-                        resolution=1.0,
-                    )
-                elif fused_global_costmap is None:
-                    print("警告：融合的全局costmap为空，无法保存实际路径可视化")
+                save_final_compare_artifacts(run_dir, fused_global_costmap, trajectory_points, waypoints_with_yaw)
                 return
 
+            # path_points_dem 已经是最终用于 UE 显示/执行的路径：
+            # - HybridAStar 成功 => Hybrid 路径
+            # - HybridAStar 失败 => BidirectionalAStar 路径
             path_points_dem = recovery["path_points_dem"]
             selected_goal_world = recovery["selected_goal_world"]
+            used_display_planner = recovery.get("used_display_planner", "BidirectionalAStar")
+            print(f"本次局部执行路径来源: {used_display_planner}")
 
             local_path_points_world = convert_dem_path_to_world(
                 path_points_dem=path_points_dem,
@@ -548,31 +543,13 @@ def main():
                     print("终点为障碍，已就近找到安全区停靠")
                 break
 
-            current_global_idx = goal_global_idx
+            # 注意：这里不能再直接用 goal_global_idx
+            # 因为挪终点后仍对应 original_goal_idx 这一路段推进逻辑
+            current_global_idx = recovery["selected_goal_global_idx"]
             print(f"已完成局部路径行走，当前全局索引更新为: {current_global_idx}")
             time.sleep(0.2)
 
-        # 【新增】在程序完成时保存实际路径和对比图
-        if fused_global_costmap is not None and len(trajectory_points) >= 2:
-            actual_path_png = run_dir / "actual_path.png"
-            compare_png = run_dir / "compare.png"
-            
-            draw_actual_path_on_costmap(
-                costmap=fused_global_costmap,
-                trajectory_points=trajectory_points,
-                output_path=str(actual_path_png),
-                resolution=1.0,
-            )
-            
-            draw_both_paths_on_costmap(
-                costmap=fused_global_costmap,
-                waypoints_with_yaw=waypoints_with_yaw,
-                trajectory_points=trajectory_points,
-                output_path=str(compare_png),
-                resolution=1.0,
-            )
-        elif fused_global_costmap is None:
-            print("警告：融合的全局costmap为空，无法保存实际路径可视化")
+        save_final_compare_artifacts(run_dir, fused_global_costmap, trajectory_points, waypoints_with_yaw)
 
         print("\n" + "=" * 70)
         print("路径跟踪与局部 DEM 构建完成！")

@@ -12,6 +12,10 @@ from config import (
     PATH_PLANNING_TIMEOUT,
     REVISION_SOFT_COST,
     START_RELAX_MAX_RADIUS_CELLS,
+    GLOBAL_PLANNER_METHOD,
+    LOCAL_PLANNER_METHOD_PHASE1,
+    LOCAL_PLANNER_METHOD_PHASE2,
+    LOCAL_GLOBAL_REPLAN_METHOD,
 )
 from visualization import load_costmap_txt, save_costmap_txt
 
@@ -22,15 +26,15 @@ class LocalPathPlanner:
         self.timeout = PATH_PLANNING_TIMEOUT
 
     # ============================================================
-    # 新增：全局交互路径规划
+    # 全局交互路径规划
     # ============================================================
     def plan_global_path_interactive(self, dem_tif_path, color_png_path, resolution, output_dir):
         """
         调用 C++ 全局交互路径规划器。
 
-        这里的正确逻辑是：
+        逻辑：
         - 实时打印 C++ stdout，让 Python 终端能看到交互说明
-        - 必须等待 C++ 进程真正退出（例如用户按 ESC 关闭窗口）后，才继续后续 Python 流程
+        - 等待 C++ 进程真正退出（例如用户按 ESC 关闭窗口）后，才继续后续 Python 流程
         - 退出后再检查 dem.txt / costmap.txt / path.txt 是否生成
         """
         import threading
@@ -70,6 +74,7 @@ class LocalPathPlanner:
         print(f"Color png: {color_png_path}")
         print(f"Resolution: {resolution}m")
         print(f"Output dir: {output_dir}")
+        print(f"规划算法: {self._get_method_name(GLOBAL_PLANNER_METHOD)}")
         print("请在 C++ 弹出的底图窗口中完成全局路径交互规划。")
         print("=" * 70)
 
@@ -85,11 +90,11 @@ class LocalPathPlanner:
             print(f"启动全局交互路径规划器失败: {e}")
             return "PROCESS_ERROR"
 
-        # 用后台线程持续读取 stdout，避免主线程阻塞
         q = queue.Queue()
+
         def _reader_thread(pipe, q_):
             try:
-                for line in iter(pipe.readline, ''):
+                for line in iter(pipe.readline, ""):
                     q_.put(line)
             except Exception:
                 pass
@@ -104,9 +109,7 @@ class LocalPathPlanner:
 
         start_time = time.time()
 
-        # 关键：这里必须等进程退出，而不是文件一生成就返回
         while True:
-            # 实时打印 C++ 输出，让交互说明能看到
             while not q.empty():
                 line = q.get_nowait()
                 print(line, end="")
@@ -123,7 +126,6 @@ class LocalPathPlanner:
 
             time.sleep(0.05)
 
-        # 把退出前残留的输出再打印完
         time.sleep(0.1)
         while not q.empty():
             line = q.get_nowait()
@@ -146,7 +148,7 @@ class LocalPathPlanner:
     def _build_global_interactive_cmd(self, dem_tif_path, color_png_path, resolution, output_dir):
         """
         与 C++ main.cpp 的 Mode 3 保持一致：
-            exe <tiff_path> <tiff_color_path> <result_dir> <grid_size>
+            exe <tiff_path> <tiff_color_path> <result_dir> <grid_size> <method>
         """
         return [
             str(self.exe_path),
@@ -154,12 +156,29 @@ class LocalPathPlanner:
             str(color_png_path),
             str(output_dir),
             str(resolution),
+            str(GLOBAL_PLANNER_METHOD),
         ]
 
     # ============================================================
-    # 原有：局部 DEM 路径规划
+    # 局部 DEM 路径规划
     # ============================================================
-    def plan_path(self, dem_path, start_col, start_row, goal_col, goal_row, resolution, output_dir):
+    def plan_path(
+        self,
+        dem_path,
+        start_col,
+        start_row,
+        goal_col,
+        goal_row,
+        resolution,
+        output_dir,
+        method=LOCAL_PLANNER_METHOD_PHASE1,
+    ):
+        """
+        从 DEM 规划路径
+
+        method:
+            0=AStar, 1=DStarLite, 2=HybridAStar, 3=BidirectionalAStar
+        """
         dem_path = Path(dem_path)
         output_dir = Path(output_dir)
 
@@ -170,7 +189,6 @@ class LocalPathPlanner:
 
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        # 关键：删除旧输出，避免误读残留文件
         for name in ("path.txt", "costmap.txt"):
             f = output_dir / name
             if f.exists():
@@ -187,6 +205,7 @@ class LocalPathPlanner:
             str(goal_col),
             str(goal_row),
             str(resolution),
+            str(method),
             str(output_dir),
         ]
 
@@ -195,11 +214,36 @@ class LocalPathPlanner:
         print(f"  起点: ({start_col}, {start_row})")
         print(f"  终点: ({goal_col}, {goal_row})")
         print(f"  分辨率: {resolution}m")
+        print(f"  算法: {self._get_method_name(method)}")
         print(f"  输出: {output_dir}")
 
         return self._run_and_parse(cmd, output_dir, expect_costmap=True)
-    
-    def plan_path_from_costmap(self, costmap_path, start_col, start_row, goal_col, goal_row, output_dir):
+
+    def _get_method_name(self, method_id):
+        names = {
+            0: "AStar",
+            1: "DStarLite",
+            2: "HybridAStar",
+            3: "BidirectionalAStar",
+        }
+        return names.get(method_id, f"Unknown({method_id})")
+
+    def plan_path_from_costmap(
+        self,
+        costmap_path,
+        start_col,
+        start_row,
+        goal_col,
+        goal_row,
+        output_dir,
+        method=LOCAL_PLANNER_METHOD_PHASE1,
+    ):
+        """
+        从 costmap 规划路径
+
+        method:
+            0=AStar, 1=DStarLite, 2=HybridAStar, 3=BidirectionalAStar
+        """
         costmap_path = Path(costmap_path)
         output_dir = Path(output_dir)
 
@@ -210,7 +254,6 @@ class LocalPathPlanner:
 
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        # 关键：删除旧 path.txt，避免读取上一次结果
         path_file = output_dir / "path.txt"
         if path_file.exists():
             try:
@@ -225,16 +268,42 @@ class LocalPathPlanner:
             str(start_row),
             str(goal_col),
             str(goal_row),
+            str(method),
             str(output_dir),
         ]
 
-        print("调用路径规划器（costmap模式）:")
+        print(f"调用路径规划器（costmap模式）:")
         print(f"  costmap: {costmap_path}")
         print(f"  起点: ({start_col}, {start_row})")
         print(f"  终点: ({goal_col}, {goal_row})")
+        print(f"  算法: {self._get_method_name(method)}")
         print(f"  输出: {output_dir}")
 
         return self._run_and_parse(cmd, output_dir, expect_costmap=False)
+
+    def plan_global_replan_from_costmap(
+        self,
+        costmap_path,
+        start_col,
+        start_row,
+        goal_col,
+        goal_row,
+        output_dir,
+    ):
+        """
+        局部触发的全局重规划：
+        按需求固定使用 BidirectionalAStar
+        """
+        return self.plan_path_from_costmap(
+            costmap_path=costmap_path,
+            start_col=start_col,
+            start_row=start_row,
+            goal_col=goal_col,
+            goal_row=goal_row,
+            output_dir=output_dir,
+            method=LOCAL_GLOBAL_REPLAN_METHOD,
+        )
+
     def plan_path_from_costmap_with_start_relaxation(
         self,
         costmap_path,
@@ -247,13 +316,14 @@ class LocalPathPlanner:
         max_radius=START_RELAX_MAX_RADIUS_CELLS,
         stop_when_start_cleared_only=False,
         gradual=False,
+        method=LOCAL_PLANNER_METHOD_PHASE1,
     ):
         """
         软化起点附近障碍
-        
+
         参数:
-            gradual: True 表示逐渐扩大半径（用于全局costmap），
-                    False 表示一次性软化到最大半径（用于局部costmap）
+            gradual=True  表示逐渐扩大半径（用于全局costmap）
+            gradual=False 表示一次性软化到最大半径（用于局部costmap）
         """
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -278,51 +348,70 @@ class LocalPathPlanner:
                 goal_col=goal_col,
                 goal_row=goal_row,
                 output_dir=output_dir,
+                method=method,
+            )
+            return status, path_points, revision_costmap_path, max_radius
+
+        last_status = "NO_PATH_FOUND"
+        last_path = None
+        last_radius = 0
+
+        for radius in range(1, max_radius + 1):
+            revised = raw_costmap.copy()
+            self._soften_obstacles_in_radius(
+                costmap=revised,
+                center=(start_col, start_row),
+                radius=radius,
+                soft_cost=REVISION_SOFT_COST,
+            )
+            save_costmap_txt(revised, revision_costmap_path)
+
+            print(f"\n[起点软化] radius = {radius}")
+            print(f"  costmap: {revision_costmap_path}")
+
+            status, path_points = self.plan_path_from_costmap(
+                costmap_path=revision_costmap_path,
+                start_col=start_col,
+                start_row=start_row,
+                goal_col=goal_col,
+                goal_row=goal_row,
+                output_dir=output_dir,
+                method=method,
             )
 
-            return status, path_points, revision_costmap_path, max_radius
-        else:
-            last_status = "NO_PATH_FOUND"
-            last_path = None
-            last_radius = 0
+            last_status = status
+            last_path = path_points
+            last_radius = radius
 
-            for radius in range(1, max_radius + 1):
-                revised = raw_costmap.copy()
-                self._soften_obstacles_in_radius(
-                    costmap=revised,
-                    center=(start_col, start_row),
-                    radius=radius,
-                    soft_cost=REVISION_SOFT_COST,
-                )
-                save_costmap_txt(revised, revision_costmap_path)
+            if status == "OK":
+                return status, path_points, revision_costmap_path, radius
 
-                print(f"\n[全局起点软化] radius = {radius}")
-                print(f"  costmap: {revision_costmap_path}")
+            if stop_when_start_cleared_only and status not in ("START_IS_OBSTACLE", "START_AND_GOAL_ARE_OBSTACLES"):
+                return status, path_points, revision_costmap_path, radius
 
-                status, path_points = self.plan_path_from_costmap(
-                    costmap_path=revision_costmap_path,
-                    start_col=start_col,
-                    start_row=start_row,
-                    goal_col=goal_col,
-                    goal_row=goal_row,
-                    output_dir=output_dir,
-                )
+        return last_status, last_path, revision_costmap_path, last_radius
 
-                last_status = status
-                last_path = path_points
-                last_radius = radius
-
-                if status == "OK":
-                    return status, path_points, revision_costmap_path, radius
-
-                if stop_when_start_cleared_only and status not in ("START_IS_OBSTACLE", "START_AND_GOAL_ARE_OBSTACLES"):
-                    return status, path_points, revision_costmap_path, radius
-
-            return last_status, last_path, revision_costmap_path, last_radius
+    def plan_hybrid_astar_from_costmap(
+        self,
+        costmap_path,
+        start_col,
+        start_row,
+        goal_col,
+        goal_row,
+        output_dir,
+    ):
+        return self.plan_path_from_costmap(
+            costmap_path=costmap_path,
+            start_col=start_col,
+            start_row=start_row,
+            goal_col=goal_col,
+            goal_row=goal_row,
+            output_dir=output_dir,
+            method=LOCAL_PLANNER_METHOD_PHASE2,
+        )
 
     @staticmethod
     def _soften_obstacles_in_radius(costmap, center, radius, soft_cost=0.99):
-        """软化指定半径内的障碍"""
         cx, cy = center
         rows, cols = costmap.shape
 
@@ -337,13 +426,12 @@ class LocalPathPlanner:
                     costmap[y, x] = soft_cost
 
     def _run_and_parse(self, cmd, output_dir, expect_costmap):
-        """运行规划器并解析结果"""
         try:
             process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                text=True
+                text=True,
             )
         except Exception as e:
             print(f"启动路径规划器失败: {e}")
@@ -376,7 +464,6 @@ class LocalPathPlanner:
         return status, None
 
     def _wait_for_outputs(self, process, output_dir, expect_costmap):
-        """等待输出文件生成"""
         output_dir = Path(output_dir)
         path_file = output_dir / "path.txt"
         costmap_file = output_dir / "costmap.txt"
@@ -399,7 +486,6 @@ class LocalPathPlanner:
             time.sleep(0.2)
 
     def _parse_path_txt(self, path_file):
-        """解析路径文件"""
         import re
 
         path_file = Path(path_file)
